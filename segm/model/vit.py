@@ -8,6 +8,7 @@ import torch.nn as nn
 
 from segm.model.utils import init_weights, resize_pos_embed
 from segm.model.blocks import Block
+from segm.model.stvit import Deit, PatchMerging
 
 from timm.models.layers import DropPath
 from timm.models.layers import trunc_normal_
@@ -49,6 +50,8 @@ class VisionTransformer(nn.Module):
         drop_path_rate=0.0,
         distilled=False,
         channels=3,
+        backbone=None,
+        stvitr_cfg=None
     ):
         super().__init__()
         self.patch_embed = PatchEmbedding(
@@ -62,7 +65,9 @@ class VisionTransformer(nn.Module):
         self.d_model = d_model
         self.d_ff = d_ff
         self.n_heads = n_heads
+        self.dropout_value = dropout
         self.dropout = nn.Dropout(dropout)
+        self.drop_path_rate = drop_path_rate
         self.n_cls = n_cls
 
         # cls and pos tokens
@@ -79,11 +84,7 @@ class VisionTransformer(nn.Module):
                 torch.randn(1, self.patch_embed.num_patches + 1, d_model)
             )
 
-        # transformer blocks
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, n_layers)]
-        self.blocks = nn.ModuleList(
-            [Block(d_model, n_heads, d_ff, dropout, dpr[i]) for i in range(n_layers)]
-        )
+        self.build_tranformer_blocks(backbone, extra_cfg=stvitr_cfg)
 
         # output head
         self.norm = nn.LayerNorm(d_model)
@@ -96,6 +97,47 @@ class VisionTransformer(nn.Module):
         self.pre_logits = nn.Identity()
 
         self.apply(init_weights)
+
+    def build_tranformer_blocks(self, backbone, extra_cfg=None):
+        # TODO: what will it be for STViT-R?
+        dpr = [x.item() for x in torch.linspace(0, self.drop_path_rate, self.n_layers)]
+        if backbone.startswith("stvitr"):
+            # first some checks
+            if not(self.n_layers == 12 or self.n_layer == 24):
+                raise ValueError(f"STViT-R model is implemented only with 12 or 24 layers. "
+                                 f"Given: {self.n_layers} layers.")
+            if self.patch_embed.image_size[0] != self.patch_embed.image_size[1]:
+                raise ValueError(f"For STViT-R block to work in this implementation, image size must be square. "
+                                 f"Actual image size: {self.patch_embed.image_size}")
+
+            blocks = [Block(self.d_model, self.n_heads, self.d_ff, self.dropout_value, dpr[i]) for i in range(4)]
+            blocks += [Deit(
+                input_resolution= self.patch_embed.image_size, #(self.patch_embed.grid_size[0] // 4, self.patch_embed.grid_size[1] // 4),  # TODO: It was like that in STViT-Swin, I'm not sure..
+                embed_dim=self.d_model,
+                depth=(self.n_layers - 6) // 6,  # 1 if 12 layers overall, 3 if 24 layers overall.
+                num_heads=self.n_heads,
+                window_size=self.patch_embed.image_size[0] // 32, # TODO: why is this hardcoded in STViT? Maybe I'm wrong..
+                sample_window_size=3,  # TODO: paper section 3.2, w_s
+                mlp_ratio=extra_cfg.MODEL.SWIN.MLP_RATIO,  # Segmenter: 4, STViT: seems to have 4 too
+                qkv_bias=extra_cfg.MODEL.SWIN.QKV_BIAS, # TODO: check models, maybe it's True for all of them
+                drop_rate=extra_cfg.MODEL.DROP_RATE,
+                attn_drop_rate=0.,
+                drop_path_rate=dpr[4:-2],  # TODO: check this
+                norm_layer=nn.LayerNorm,
+                downsample=PatchMerging,
+                multi_scale=extra_cfg.MULTI_SCALE,
+                relative_pos=extra_cfg.RELATIVE_POS,
+                use_conv_pos=extra_cfg.USE_CONV_POS,
+                shortcut=extra_cfg.SHORTCUT,
+                use_global=extra_cfg.USE_GLOBAL
+            )]
+            blocks += [Block(self.d_model, self.n_heads, self.d_ff, self.dropout_value, dpr[i]) for i in
+                      range(self.n_layers - 2, self.n_layers)]
+            self.blocks = nn.ModuleList(blocks)
+        else:
+            self.blocks = nn.ModuleList(
+                [Block(self.d_model, self.n_heads, self.d_ff, self.dropout_value, dpr[i]) for i in range(self.n_layers)]
+            )
 
     @torch.jit.ignore
     def no_weight_decay(self):

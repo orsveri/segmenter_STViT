@@ -4,6 +4,7 @@ import torch
 import math
 import os
 import torch.nn as nn
+from copy import deepcopy
 
 from timm.models.helpers import load_pretrained, load_custom_pretrained
 from timm.models.vision_transformer import default_cfgs
@@ -11,6 +12,7 @@ from timm.models.registry import register_model
 from timm.models.vision_transformer import _create_vision_transformer
 
 from segm.model.vit import VisionTransformer
+from segm.model.stvit import build_stvit_model, get_stvit_config
 from segm.model.utils import checkpoint_filter_fn
 from segm.model.decoder import DecoderLinear
 from segm.model.decoder import MaskTransformer
@@ -39,12 +41,11 @@ def vit_base_patch8_384(pretrained=False, **kwargs):
     return model
 
 
-def create_vit(model_cfg):
+def create_vit(model_cfg, stvit_cfg=None):
     model_cfg = model_cfg.copy()
-    backbone = model_cfg.pop("backbone")
+    #backbone = model_cfg.pop("backbone")
+    backbone = model_cfg["backbone"]
 
-    normalization = model_cfg.pop("normalization")
-    model_cfg["n_cls"] = 1000
     mlp_expansion_ratio = 4
     model_cfg["d_ff"] = mlp_expansion_ratio * model_cfg["d_model"]
 
@@ -64,7 +65,7 @@ def create_vit(model_cfg):
         model_cfg["image_size"][0],
         model_cfg["image_size"][1],
     )
-    model = VisionTransformer(**model_cfg)
+    model = VisionTransformer(stvitr_cfg=stvit_cfg, **model_cfg)
     if backbone == "vit_base_patch8_384":
         path = os.path.expandvars("$TORCH_HOME/hub/checkpoints/vit_base_patch8_384.pth")
         state_dict = torch.load(path, map_location="cpu")
@@ -74,7 +75,31 @@ def create_vit(model_cfg):
         load_pretrained(model, default_cfg, filter_fn=checkpoint_filter_fn)
     else:
         load_custom_pretrained(model, default_cfg)
+    return model
 
+
+def create_encoder(model_cfg):
+    backbone = model_cfg["backbone"]
+    normalization = model_cfg.pop("normalization")  # TODO: it was in the original code, maybe I'll need it later?..
+    model_cfg["n_cls"] = 1000  # they are not classes actually
+    # mlp_expansion_ratio = 4
+    # model_cfg["d_ff"] = mlp_expansion_ratio * model_cfg["d_model"]  # TODO: what is dff?
+
+    if backbone.startswith("stvitr"):
+        # TODO: make setting the path to stvit cfg more convenient
+        cfg_file = (Path("segm/model/stvit/configs") / model_cfg.pop("config_file")).with_suffix('.yaml')
+        stvit_cfg = get_stvit_config(cfg_file, nb_cls=model_cfg["n_cls"])
+        if normalization == "swin":
+            model = build_stvit_model(stvit_cfg)
+        elif normalization == "deit":
+            model = create_vit(model_cfg, stvit_cfg=stvit_cfg)
+        else:
+            raise ValueError(
+                f"Incorrect model configuration: normalization can be only 'swin' or 'deit'. Given: {normalization}"
+            )
+        # TODO: load pretrained weights if there are any
+    else:
+        model = create_vit(model_cfg)
     return model
 
 
@@ -103,7 +128,7 @@ def create_segmenter(model_cfg):
     decoder_cfg = model_cfg.pop("decoder")
     decoder_cfg["n_cls"] = model_cfg["n_cls"]
 
-    encoder = create_vit(model_cfg)
+    encoder = create_encoder(model_cfg)  #create_vit(model_cfg)
     decoder = create_decoder(encoder, decoder_cfg)
     model = Segmenter(encoder, decoder, n_cls=model_cfg["n_cls"])
 

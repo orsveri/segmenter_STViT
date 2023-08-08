@@ -94,6 +94,25 @@ model:
     n_heads: 16
     n_layers: 24
     normalization: vit
+  # stvit-r
+  stvitr_tiny_distilled_patch16_224:
+    image_size: 224
+    patch_size: 16
+    d_model: 192
+    n_heads: 3
+    n_layers: 12
+    normalization: deit
+    distilled: true
+    config_file: swin_tiny_patch4_window7_224
+  stvitr_tiny_patch16_384:
+    image_size: 384
+    patch_size: 16
+    d_model: 192
+    n_heads: 3
+    n_layers: 12
+    normalization: vit
+    distilled: false
+    config_file: swin_tiny_patch4_window7_224
 decoder:
   linear: {}
   deeplab_dec:
