@@ -28,6 +28,8 @@ import numpy as np
 import pdb
 import pickle
 
+from segm.model.blocks import Attention
+
 _logger = logging.getLogger(__name__)
 
 
@@ -55,7 +57,7 @@ class Mlp(nn.Module):
         return x
 
 
-class Attention(nn.Module):
+class STViT_Attention(nn.Module):
     def __init__(self, dim, window_size, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., relative_pos=False):
         super().__init__()
         self.num_heads = num_heads
@@ -109,13 +111,13 @@ class Attention(nn.Module):
         return x
 
 
-class Block(nn.Module):
+class STViT_Block(nn.Module):
 
     def __init__(self, dim, num_heads, window_size=3, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, layer_scale_init_value=1e-5, relative_pos=False, local=False):
         super().__init__()
         self.norm1 = norm_layer(dim)
-        self.attn = Attention(dim, window_size=window_size, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, relative_pos=relative_pos)
+        self.attn = STViT_Attention(dim, window_size=window_size, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, relative_pos=relative_pos)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -135,14 +137,14 @@ class Block(nn.Module):
         if y == None:
             y = x
         x = self.norm1(x)
-        # if self.local:
-        #     B, L, C = x.shape
-        #     H = W = int(math.sqrt(L))
-        #     x = x.view(B, H // self.window_size, self.window_size, W // self.window_size, self.window_size, C)
-        #     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, self.window_size*self.window_size, C)
-        #     attn = self.attn(x, x)
-        #     attn = attn.view(B, H // self.window_size, W // self.window_size, self.window_size, self.window_size, C)
-        #     attn = attn.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, -1, C)
+        if self.local:
+            B, L, C = x.shape
+            H = W = int(math.sqrt(L))
+            x = x.view(B, H // self.window_size, self.window_size, W // self.window_size, self.window_size, C)
+            x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, self.window_size*self.window_size, C)
+            attn = self.attn(x, x)
+            attn = attn.view(B, H // self.window_size, W // self.window_size, self.window_size, self.window_size, C)
+            attn = attn.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, -1, C)
         else:
             attn = self.attn(x, self.norm1(y))
         x = shortcut + self.drop_path(self.layer_scale_1 * attn)
@@ -150,56 +152,42 @@ class Block(nn.Module):
         return x
 
 
-class Block(nn.Module):
+class STViT_Block_simple(nn.Module):
 
-    def __init__(self, dim, num_heads, window_size=3, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, layer_scale_init_value=1e-5, relative_pos=False, local=False):
+    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0.,
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, layer_scale_init_value=1e-5):
         super().__init__()
         self.norm1 = norm_layer(dim)
-        self.attn = Attention(dim, window_size=window_size, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, relative_pos=relative_pos)
+        self.norm2 = norm_layer(dim)
+        # it is normal attention here
+        self.attn = STViT_Attention(dim, window_size=None, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, relative_pos=False)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
         self.layer_scale_1 = nn.Parameter(
             layer_scale_init_value * torch.ones((dim)), requires_grad=True)
         self.layer_scale_2 = nn.Parameter(
             layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-        self.local = local
-        self.window_size = window_size
 
     def forward(self, x, y=None):
-        if self.local and y != None:
-            raise Exception()
-        shortcut = x  # B, L, C
         if y == None:
             y = x
-        x = self.norm1(x)
-        # if self.local:
-        #     B, L, C = x.shape
-        #     H = W = int(math.sqrt(L))
-        #     x = x.view(B, H // self.window_size, self.window_size, W // self.window_size, self.window_size, C)
-        #     x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, self.window_size*self.window_size, C)
-        #     attn = self.attn(x, x)
-        #     attn = attn.view(B, H // self.window_size, W // self.window_size, self.window_size, self.window_size, C)
-        #     attn = attn.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, -1, C)
-        else:
-            attn = self.attn(x, self.norm1(y))
-        x = shortcut + self.drop_path(self.layer_scale_1 * attn)
+        attn = self.attn(self.norm1(x), self.norm1(y))
+        x = x + self.drop_path(self.layer_scale_1 * attn)
         x = x + self.drop_path(self.layer_scale_2 * self.mlp(self.norm2(x)))
         return x
 
 
-class SemanticAttentionBlock(nn.Module):
+class STViT_SemanticAttentionBlock(nn.Module):
 
-    def __init__(self, dim, num_heads, multi_scale, window_size=7, sample_window_size=3, mlp_ratio=4., qkv_bias=False, drop=0.,
-                 attn_drop=0., drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, layer_scale_init_value=1e-5, 
-                 use_conv_pos=False, shortcut=False):
+    def __init__(self, dim, num_heads, multi_scale, window_size=7, sample_window_size=3, mlp_ratio=4., qkv_bias=False,
+                 drop=0., attn_drop=0., drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,
+                 layer_scale_init_value=1e-5, use_conv_pos=False, shortcut=False):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.multi_scale = multi_scale(sample_window_size)
-        self.attn = Attention(dim, num_heads=num_heads, window_size=None, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
+        self.attn = STViT_Attention(dim, num_heads=num_heads, window_size=None, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -283,7 +271,7 @@ class Conv2d_BN(torch.nn.Sequential):
         self.add_module('bn', bn)
 
 
-class PatchEmbed(nn.Module):
+class STViT_PatchEmbed(nn.Module):
     r""" Image to Patch Embedding
 
     Args:

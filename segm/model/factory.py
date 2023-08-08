@@ -90,6 +90,7 @@ def create_encoder(model_cfg):
         cfg_file = (Path("segm/model/stvit/configs") / model_cfg.pop("config_file")).with_suffix('.yaml')
         stvit_cfg = get_stvit_config(cfg_file, nb_cls=model_cfg["n_cls"])
         if normalization == "swin":
+            # TODO: move some parameters from Segmenter config here
             model = build_stvit_model(stvit_cfg)
         elif normalization == "deit":
             model = create_vit(model_cfg, stvit_cfg=stvit_cfg)

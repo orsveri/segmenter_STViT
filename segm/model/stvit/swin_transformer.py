@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from segm.model.stvit.layers import Block, SemanticAttentionBlock, PosCNN, PatchEmbed
+from segm.model.stvit.layers import STViT_Block, STViT_SemanticAttentionBlock, PosCNN, STViT_PatchEmbed
 from segm.model.stvit.multi_scale import *
 import math
 
@@ -488,7 +488,7 @@ class Deit(nn.Module):
                     )
 
             elif i in [1, 7, 13]:
-                self.blocks.append(SemanticAttentionBlock(
+                self.blocks.append(STViT_SemanticAttentionBlock(
                     dim=embed_dim, window_size=window_size, sample_window_size=sample_window_size, 
                     num_heads=num_heads, multi_scale=self.multi_scale, mlp_ratio=mlp_ratio,
                     qkv_bias=qkv_bias, drop=drop_rate, attn_drop=attn_drop_rate, drop_path=drop_path_rate[i], 
@@ -496,22 +496,21 @@ class Deit(nn.Module):
                     use_conv_pos=use_conv_pos, shortcut=shortcut)
                     )
             elif i in [2, 5, 8, 11, 14, 17]:
-                # TODO: replace with segmenter's implementation
-                self.blocks.append(Block(
+                # TODO: replace with segmenter's implementation START HERE
+                self.blocks.append(STViT_Block(
                     dim=embed_dim, window_size=None, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, attn_drop=attn_drop_rate,
                     drop=drop_rate, drop_path=drop_path_rate[i], norm_layer=norm_layer, act_layer=act_layer, relative_pos=False, local=False)
                     )
             else:
-                local = bool(i%2)
                 if local:
                     # TODO: replace with segmenter's implementation
-                    self.blocks.append(Block(
+                    self.blocks.append(STViT_Block(
                         dim=embed_dim, window_size=sample_window_size, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, attn_drop=attn_drop_rate,
                         drop=drop_rate, drop_path=drop_path_rate[i], norm_layer=norm_layer, act_layer=act_layer, relative_pos=relative_pos, local=local)
                         )
                 else:
                     # TODO: replace with segmenter's implementation
-                    self.blocks.append(Block(
+                    self.blocks.append(STViT_Block(
                         dim=embed_dim, window_size=input_resolution[0]//window_size*sample_window_size, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, attn_drop=attn_drop_rate,
                         drop=drop_rate, drop_path=drop_path_rate[i], norm_layer=norm_layer, act_layer=act_layer, relative_pos=relative_pos, local=local)
                         )
@@ -611,7 +610,7 @@ class Deit2(nn.Module):
 
         # dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.blocks = nn.ModuleList([
-            Block(
+            STViT_Block(
                 dim=embed_dim, num_heads=num_heads, window_size=(int(math.sqrt(self.num_samples)), int(math.sqrt(self.num_samples))), mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, drop=drop_rate,
                 attn_drop=attn_drop_rate, drop_path=drop_path_rate[i], norm_layer=norm_layer, act_layer=act_layer)
             for i in range(depth)])
@@ -678,7 +677,7 @@ class SwinTransformer(nn.Module):
         self.multi_scale = eval(multi_scale)
 
         # split image into non-overlapping patches
-        self.patch_embed = PatchEmbed(
+        self.patch_embed = STViT_PatchEmbed(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,
             norm_layer=norm_layer if self.patch_norm else None)
         num_patches = self.patch_embed.num_patches

@@ -107,7 +107,7 @@ class VisionTransformer(nn.Module):
                 raise ValueError(f"STViT-R model is implemented only with 12 or 24 layers. "
                                  f"Given: {self.n_layers} layers.")
             if self.patch_embed.image_size[0] != self.patch_embed.image_size[1]:
-                raise ValueError(f"For STViT-R block to work in this implementation, image size must be square. "
+                raise ValueError(f"For STViT-R block to work in this implementation, the image size must be square. "
                                  f"Actual image size: {self.patch_embed.image_size}")
 
             blocks = [Block(self.d_model, self.n_heads, self.d_ff, self.dropout_value, dpr[i]) for i in range(4)]
